@@ -3,7 +3,7 @@
   "system_prompt_file": "../prompts/system.intent.example.md",
   "cases_file": "../prompts/cases.intent.example.json",
   "output_dir": "../runs",
-  "timeout_seconds": 120,
+  "timeout_seconds": 60,
   "max_concurrency": 4,
   "defaults": {
     "temperature": 0.5,
@@ -26,7 +26,8 @@
       "name": "zai_glm_5_1",
       "provider": "zai",
       "model": "glm-5.1",
-      "enabled": false
+      "temperature": 0.2,
+      "enabled": true
     },
     {
       "name": "zai_glm_4_6",
@@ -52,13 +53,13 @@
       "provider": "bailian",
       "model": "qwen-plus",
       "temperature": 0.8,
-      "enabled": false
+      "enabled": true
     },
     {
       "name": "bailian_qwen_flash",
       "provider": "bailian",
-      "model": "qwen-flash",
-      "enabled": false
+      "model": "qwen3.5-flash",
+      "enabled": true
     }
   ]
 }

@@ -6,9 +6,12 @@ import asyncio
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List
+from time import perf_counter
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from .config import CompareConfig, ModelConfig
+
+ProgressCallback = Callable[[str, Dict[str, Any]], None]
 
 
 def enabled_models(config: CompareConfig) -> List[ModelConfig]:
@@ -27,31 +30,56 @@ def create_client(model_config: ModelConfig):
     return OpenAICompatibleClient(model_config)
 
 
+def _emit_progress(
+    progress_callback: Optional[ProgressCallback],
+    event: str,
+    payload: Dict[str, Any],
+) -> None:
+    if progress_callback is not None:
+        progress_callback(event, payload)
+
+
 async def run_one_case(
     system_prompt: str,
     case: Dict[str, str],
     models: Iterable[ModelConfig],
     max_concurrency: int,
+    progress_callback: Optional[ProgressCallback] = None,
 ) -> Dict[str, Any]:
     """Run one input case against all enabled models."""
     semaphore = asyncio.Semaphore(max_concurrency)
 
     async def _call(model_config: ModelConfig) -> Dict[str, Any]:
         async with semaphore:
+            _emit_progress(
+                progress_callback,
+                "model_start",
+                {"case": case, "model": model_config},
+            )
+            started_at = perf_counter()
             try:
                 client = create_client(model_config)
                 response = await client.complete(system_prompt, case["input"])
-                return {"ok": True, **response}
+                result = {"ok": True, **response}
             except Exception as exc:
-                return {
+                result = {
                     "ok": False,
                     "model_name": model_config.name,
                     "provider": model_config.provider,
                     "requested_model": model_config.model,
                     "temperature": model_config.temperature,
                     "max_tokens": model_config.max_tokens,
+                    "latency_seconds": perf_counter() - started_at,
                     "error": str(exc),
                 }
+
+            result.setdefault("latency_seconds", perf_counter() - started_at)
+            _emit_progress(
+                progress_callback,
+                "model_done",
+                {"case": case, "model": model_config, "result": result},
+            )
+            return result
 
     results = await asyncio.gather(*[_call(model_config) for model_config in models])
     return {
@@ -64,6 +92,7 @@ async def run_cases(
     system_prompt: str,
     cases: List[Dict[str, str]],
     config: CompareConfig,
+    progress_callback: Optional[ProgressCallback] = None,
 ) -> Dict[str, Any]:
     """Run all cases."""
     models = enabled_models(config)
@@ -72,17 +101,46 @@ async def run_cases(
 
     case_results = []
     started_at = datetime.now()
-    for case in cases:
-        case_results.append(
-            await run_one_case(
-                system_prompt=system_prompt,
-                case=case,
-                models=models,
-                max_concurrency=config.max_concurrency,
-            )
+    _emit_progress(
+        progress_callback,
+        "run_start",
+        {
+            "case_count": len(cases),
+            "model_count": len(models),
+            "max_concurrency": config.max_concurrency,
+        },
+    )
+
+    for index, case in enumerate(cases, start=1):
+        _emit_progress(
+            progress_callback,
+            "case_start",
+            {
+                "case": case,
+                "case_index": index,
+                "case_count": len(cases),
+                "model_count": len(models),
+            },
+        )
+        case_result = await run_one_case(
+            system_prompt=system_prompt,
+            case=case,
+            models=models,
+            max_concurrency=config.max_concurrency,
+            progress_callback=progress_callback,
+        )
+        case_results.append(case_result)
+        _emit_progress(
+            progress_callback,
+            "case_done",
+            {
+                "case_result": case_result,
+                "case_index": index,
+                "case_count": len(cases),
+            },
         )
 
-    return {
+    report = {
         "created_at": started_at.isoformat(timespec="seconds"),
         "system_prompt_file": str(config.system_prompt_file),
         "models": [
@@ -99,6 +157,153 @@ async def run_cases(
         ],
         "cases": case_results,
     }
+    _emit_progress(progress_callback, "run_done", {"report": report})
+    return report
+
+
+def _iter_results(report: Dict[str, Any]):
+    for case_result in report["cases"]:
+        for result in case_result["results"]:
+            yield case_result["case"], result
+
+
+def summarize_report(report: Dict[str, Any]) -> Dict[str, Any]:
+    """Return compact aggregate metrics for a completed report."""
+    results = list(_iter_results(report))
+    ok_results = [(case, result) for case, result in results if result["ok"]]
+    failed_results = [(case, result) for case, result in results if not result["ok"]]
+    latencies = [
+        result["latency_seconds"]
+        for _, result in results
+        if isinstance(result.get("latency_seconds"), (int, float))
+    ]
+    token_total = 0
+    for _, result in ok_results:
+        usage = result.get("usage") or {}
+        if isinstance(usage.get("total_tokens"), int):
+            token_total += usage["total_tokens"]
+
+    latency_summary = None
+    if latencies:
+        latency_summary = {
+            "min": min(latencies),
+            "avg": sum(latencies) / len(latencies),
+            "max": max(latencies),
+        }
+
+    return {
+        "cases": len(report["cases"]),
+        "model_calls": len(results),
+        "ok": len(ok_results),
+        "failed": len(failed_results),
+        "latency": latency_summary,
+        "tokens": token_total,
+        "failures": failed_results,
+    }
+
+
+def _shorten(value: str, max_length: int = 140) -> str:
+    single_line = " ".join(value.split())
+    if len(single_line) <= max_length:
+        return single_line
+    return single_line[: max_length - 3] + "..."
+
+
+def print_summary(
+    report: Dict[str, Any],
+    saved: Optional[Dict[str, Path]] = None,
+) -> None:
+    """Print a concise completion summary to stdout."""
+    summary = summarize_report(report)
+    print("\nSummary:", flush=True)
+    print(f"- Cases: {summary['cases']}", flush=True)
+    print(
+        f"- Model calls: {summary['model_calls']} total, "
+        f"{summary['ok']} ok, {summary['failed']} failed",
+        flush=True,
+    )
+
+    latency = summary["latency"]
+    if latency:
+        print(
+            "- Latency: "
+            f"min {latency['min']:.2f}s, avg {latency['avg']:.2f}s, max {latency['max']:.2f}s",
+            flush=True,
+        )
+    if summary["tokens"]:
+        print(f"- Tokens: {summary['tokens']} total", flush=True)
+
+    failures = summary["failures"]
+    if failures:
+        print("- Failures:", flush=True)
+        for case, result in failures[:3]:
+            print(
+                f"  {case['id']} / {result['model_name']}: "
+                f"{_shorten(result.get('error', 'unknown error'))}",
+                flush=True,
+            )
+        if len(failures) > 3:
+            print(f"  ... {len(failures) - 3} more", flush=True)
+
+    if saved:
+        print("- Saved:", flush=True)
+        print(f"  JSON: {saved['json']}", flush=True)
+        print(f"  Markdown: {saved['markdown']}", flush=True)
+
+
+def print_progress(event: str, payload: Dict[str, Any]) -> None:
+    """Print one-line progress events as model calls run."""
+    if event == "run_start":
+        print(
+            "Starting comparison: "
+            f"{payload['case_count']} case(s), {payload['model_count']} model(s), "
+            f"concurrency={payload['max_concurrency']}",
+            flush=True,
+        )
+        return
+
+    if event == "case_start":
+        case = payload["case"]
+        print(
+            f"\nCase {payload['case_index']}/{payload['case_count']} "
+            f"{case['id']}: dispatching {payload['model_count']} model(s)",
+            flush=True,
+        )
+        return
+
+    if event == "model_start":
+        model = payload["model"]
+        print(f"  -> {model.name} ({model.model})", flush=True)
+        return
+
+    if event == "model_done":
+        result = payload["result"]
+        latency = result.get("latency_seconds")
+        latency_text = f"{latency:.2f}s" if isinstance(latency, (int, float)) else "n/a"
+        if not result["ok"]:
+            print(
+                f"  <- {result['model_name']} FAILED {latency_text}: "
+                f"{_shorten(result.get('error', 'unknown error'), 100)}",
+                flush=True,
+            )
+            return
+
+        usage = result.get("usage") or {}
+        token_text = ""
+        if isinstance(usage.get("total_tokens"), int):
+            token_text = f", {usage['total_tokens']} tokens"
+        print(f"  <- {result['model_name']} OK {latency_text}{token_text}", flush=True)
+        return
+
+    if event == "case_done":
+        case_result = payload["case_result"]
+        ok_count = sum(1 for result in case_result["results"] if result["ok"])
+        failed_count = len(case_result["results"]) - ok_count
+        print(
+            f"Case {payload['case_index']}/{payload['case_count']} done: "
+            f"{ok_count} ok, {failed_count} failed",
+            flush=True,
+        )
 
 
 def print_report(report: Dict[str, Any]) -> None:

@@ -77,6 +77,8 @@ python compare_models.py --config configs/model_compare.local.json --list-models
 python compare_models.py --config configs/model_compare.local.json
 ```
 
+运行时会实时输出 case 和模型调用进度，结束后只输出精简摘要；完整回答默认保存到 `output_dir` 的 JSON/Markdown 报告。
+
 运行单条输入：
 
 ```bash
@@ -85,10 +87,16 @@ python compare_models.py \
   --case "明天下午三点提醒我开项目复盘会，大概一小时"
 ```
 
-只打印终端结果，不保存报告：
+不保存报告，只看实时进度和摘要：
 
 ```bash
 python compare_models.py --config configs/model_compare.local.json --no-save
+```
+
+需要在终端同时打印完整回答时：
+
+```bash
+python compare_models.py --config configs/model_compare.local.json --print-report
 ```
 
 ## 配置说明

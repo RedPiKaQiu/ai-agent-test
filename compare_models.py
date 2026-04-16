@@ -10,7 +10,13 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from llm_compare.config import load_cases, load_compare_config, read_text_file
-from llm_compare.runner import print_report, run_cases, save_report
+from llm_compare.runner import (
+    print_progress,
+    print_report,
+    print_summary,
+    run_cases,
+    save_report,
+)
 
 
 def _build_cases(args: argparse.Namespace, config_cases_file: Optional[Path]) -> List[Dict[str, str]]:
@@ -57,6 +63,11 @@ async def main() -> None:
         default=None,
         help="Override output_dir from config.",
     )
+    parser.add_argument(
+        "--print-report",
+        action="store_true",
+        help="Print full model answers after the progress summary.",
+    )
     args = parser.parse_args()
 
     try:
@@ -76,15 +87,20 @@ async def main() -> None:
 
         system_prompt = read_text_file(config.system_prompt_file)
         cases = _build_cases(args, config.cases_file)
-        report = await run_cases(system_prompt, cases, config)
-        print_report(report)
+        report = await run_cases(system_prompt, cases, config, progress_callback=print_progress)
 
+        saved = None
         if not args.no_save:
             output_dir = Path(args.output_dir).resolve() if args.output_dir else config.output_dir
             saved = save_report(report, output_dir)
-            print("\nSaved:")
-            print(f"- JSON: {saved['json']}")
-            print(f"- Markdown: {saved['markdown']}")
+
+        print_summary(report, saved)
+
+        if args.no_save and not args.print_report:
+            print("- Detailed answers: not saved (--no-save) and not printed", flush=True)
+
+        if args.print_report:
+            print_report(report)
 
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
