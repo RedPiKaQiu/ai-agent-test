@@ -30,12 +30,12 @@ from dify_helper import (
 
 def discover_default_config_files() -> List[str]:
     """
-    自动发现当前目录下的配置文件
+    自动发现脚本目录下的配置文件
 
     Returns:
         List[str]: 存在的配置文件路径列表
     """
-    base_dir = Path.cwd()
+    base_dir = Path(__file__).resolve().parent
     discovered: List[str] = []
 
     main_config = base_dir / "config.json"
@@ -72,7 +72,7 @@ def resolve_config_paths(primary: Optional[str], secondary: Optional[str]) -> Di
 
     discovered = discover_default_config_files()
     if not discovered:
-        print("错误: 当前目录未找到 config.json 或 config_*.json 配置文件")
+        print("错误: Dify 测试目录未找到 config.json 或 config_*.json 配置文件")
         print("请至少提供一个配置文件，或使用 --config 参数指定路径")
         sys.exit(1)
 

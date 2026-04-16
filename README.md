@@ -1,239 +1,227 @@
-# Dify Agent 测试工具
+# AI 直连模型对比工具
 
-这是一个独立的测试脚本，用于测试 Dify agent 的意图识别功能。脚本完全独立于后端应用，所有依赖都在 `agentTest/` 目录内。
+这个项目用于脱离后端和 Dify 编排，直接调用多个 OpenAI-compatible 模型，对同一个 system prompt 和同一组用户输入进行并发对比。适合做模型选型、prompt 回归测试、结构化输出稳定性评估。
 
-## 功能特性
+Dify 调用脚本已经单独移到 [`dify_agent_test/`](./dify_agent_test/README.md)。
 
-- ✅ 命令行交互界面
-- ✅ 支持多轮对话（通过 conversation_id）
-- ✅ 用户信息从配置文件读取
-- ✅ API_KEY 可配置
-- ✅ 独立于后端应用，无需数据库
-- ✅ 清晰的错误提示和日志输出
+## 核心能力
 
-## 文件结构
+- 同一个 system prompt 文件同时调用多个模型。
+- 模型、密钥环境变量、base URL、温度、token 上限都通过 JSON 配置。
+- 支持批量 case 文件，也支持命令行传入单条输入。
+- 每次运行会输出终端对比结果，并可保存 JSON 和 Markdown 报告。
+- 当前支持 OpenAI-compatible Chat Completions 接口，后续可扩展非兼容服务商。
 
+## 目录结构
+
+```text
+.
+├── compare_models.py                    # 直连模型对比 CLI
+├── llm_compare/                         # 模型对比框架代码
+├── configs/
+│   └── model_compare.example.json       # 配置示例
+├── .env.example                         # 环境变量示例，不含真实密钥
+├── prompts/
+│   ├── system.intent.example.md         # system prompt 示例
+│   └── cases.intent.example.json        # 测试 case 示例
+├── runs/                                # 运行结果输出目录，已 gitignore
+├── dify_agent_test/                     # 原 Dify 测试脚本，独立 README
+├── requirements.txt
+└── README.md
 ```
-agentTest/
-├── test_dify_agent.py    # 主测试脚本
-├── dify_helper.py        # 工具模块
-├── config.json           # 配置文件示例
-└── README.md            # 使用说明
-```
 
-## 依赖要求
-
-- Python 3.9+
-- aiohttp
-- prompt_toolkit（提供对中文/全角字符友好的输入体验，解决退格显示错位问题）
-
-安装依赖：
+## 安装依赖
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## 使用方法
+`aiohttp` 用于 API 调用；`prompt_toolkit` 主要给 Dify 交互脚本使用。
 
-### 1. 配置准备
+## 快速开始
 
-编辑 `config.json` 文件，设置以下必需字段：
-
-- `api_key`: Dify API 密钥
-- `dify_base_url`: Dify API 基础URL（默认: https://api.dify.ai/v1）
-- `timezone`: 时区（默认: Asia/Shanghai）
-- `user`: 用户标识符
-
-可选字段：
-
-- `agent_name`: agent 的命令名称（如设置为 `"nameA"`，即可通过 `:nameA` 在 CLI 中切换）
-- `current_state`: 当前状态对象
-- `user_memory`: 用户记忆对象
-- `behavioral_patterns`: 行为模式对象
-- `insight`: 洞察数据对象
-- `candidate_items`: 候选事项列表
-- `context_info`: 上下文信息（如果为 null，会自动生成）
-
-### 2. 运行脚本
-
-脚本默认会在当前目录中自动扫描 `config.json` 及 `config_*.json` 文件，自动加载所有存在的配置；
-也可以通过命令行参数显式指定需要的配置文件。
+复制环境变量模板，并填入本地密钥：
 
 ```bash
-# 进入 agentTest 目录
-cd agentTest
-
-# 使用默认配置文件（自动识别 config.json、config_*.json）
-python test_dify_agent.py
-
-# 指定自定义配置文件
-python test_dify_agent.py --config custom_config.json
-
-# 同时加载两个 agent 配置（若提供 agent_name，可通过 :自定义名称 切换）
-python test_dify_agent.py --config agent1_config.json --config2 agent2_config.json
+cp .env.example .env
 ```
 
-### 3. 交互命令
+`.env` 已加入 `.gitignore`，不要提交真实 API key。
 
-- 直接输入 `user_input` 内容进行测试
-- 输入 `exit` 或 `quit` 退出程序
-- 输入 `reset` 重置对话（清空 conversation_id）
-- 输入 `config` 显示当前配置信息
-- 默认处于多行模式（输入 `:end` 完成输入，输入 `:cancel` 放弃当前多行输入）
-- 输入 `:chmod` 在单行/多行模式之间切换；单行模式下也可用 `:paste` 临时进入多行模式
-- CLI 默认使用 `prompt_toolkit`，确保中文和其他宽字符在退格时光标位置正确；如未安装该依赖则自动回退到标准输入（体验略逊）
-- 同时加载多个配置时，可输入 `:agentName`（来源于配置中的 `agent_name` 字段，默认 `:agent1/:agent2/...`）切换调用的 agent
+复制一份本地配置：
 
-## 配置示例
+```bash
+cp configs/model_compare.example.json configs/model_compare.local.json
+```
+
+`configs/model_compare.local.json` 已加入 `.gitignore`，建议在这里启用本机要测试的模型。示例配置 [`configs/model_compare.example.json`](./configs/model_compare.example.json) 可以提交到 git，因为它只引用环境变量名，不包含真实密钥。
+
+示例里的模型默认都是 `"enabled": false`，实际运行前只需要在本地配置中把要测试的模型改成 `"enabled": true`。
+
+`.env` 示例：
+
+```dotenv
+ZAI_API_KEY=sk-...
+BAILIAN_API_KEY=sk-...
+```
+
+查看配置中的模型：
+
+```bash
+python compare_models.py --config configs/model_compare.local.json --list-models
+```
+
+批量运行 `cases_file`：
+
+```bash
+python compare_models.py --config configs/model_compare.local.json
+```
+
+运行单条输入：
+
+```bash
+python compare_models.py \
+  --config configs/model_compare.local.json \
+  --case "明天下午三点提醒我开项目复盘会，大概一小时"
+```
+
+只打印终端结果，不保存报告：
+
+```bash
+python compare_models.py --config configs/model_compare.local.json --no-save
+```
+
+## 配置说明
+
+配置文件示例见 [`configs/model_compare.example.json`](./configs/model_compare.example.json)：
 
 ```json
 {
-  "api_key": "app-xxx",
-  "dify_base_url": "https://api.dify.ai/v1",
-  "timezone": "Asia/Shanghai",
-  "user": "test_user_001",
-  "agent_name": "dailyAgent",
-  "current_state": {
-    "physical_energy": "medium",
-    "stress_level": "low",
-    "sleep_quality": "good",
-    "activity_readiness": "ready",
-    "cycle_phase": "unknown"
+  "env_file": "../.env",
+  "system_prompt_file": "../prompts/system.intent.example.md",
+  "cases_file": "../prompts/cases.intent.example.json",
+  "output_dir": "../runs",
+  "timeout_seconds": 120,
+  "max_concurrency": 4,
+  "defaults": {
+    "temperature": 0.2,
+    "max_tokens": 1200
   },
-  "user_memory": {
-    "recent_state": [],
-    "short_term_focus": [],
-    "long_term_interests": [],
-    "values_and_priorities": [],
-    "interests_and_intentions": [],
-    "pending_life_items": []
+  "providers": {
+    "zai": {
+      "type": "openai_compatible",
+      "base_url": "https://api.z.ai/api/paas/v4",
+      "api_key_env": "ZAI_API_KEY"
+    },
+    "bailian": {
+      "type": "openai_compatible",
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "api_key_env": "BAILIAN_API_KEY"
+    }
   },
-  "behavioral_patterns": {
-    "energy_rhythms": [],
-    "success_factors": [],
-    "procrastination_triggers": [],
-    "energy_management": [],
-    "decision_making": [],
-    "mood_triggers": [],
-    "attention_patterns": [],
-    "physical_influences": [],
-    "risk_factors": []
-  },
-  "insight": {
-    "recent_you": [],
-    "you_focus_on": [],
-    "you_tend_to": []
-  },
-  "candidate_items": [],
-  "context_info": null
+  "models": [
+    {
+      "name": "bailian_qwen_plus",
+      "provider": "bailian",
+      "model": "qwen-plus",
+      "temperature": 0.2,
+      "enabled": true
+    }
+  ]
 }
 ```
 
-## 使用示例
+字段含义：
 
-```bash
-$ cd agentTest
-$ python test_dify_agent.py
+- `env_file`：可选，本地 `.env` 文件路径；加载后不会覆盖系统里已存在的同名环境变量。
+- `system_prompt_file`：所有模型共用的 system prompt 文件。
+- `cases_file`：批量测试输入文件。
+- `output_dir`：结果输出目录。
+- `timeout_seconds`：单个 API 请求超时时间。
+- `max_concurrency`：同一个 case 下最多同时调用多少个模型。
+- `defaults.temperature`：默认采样温度，可被单个模型覆盖。
+- `defaults.max_tokens`：默认输出 token 上限，可被单个模型覆盖。
+- `providers`：集中配置服务商 endpoint 和密钥环境变量。
+- `providers.*.type`：当前支持 `openai_compatible`。
+- `providers.*.base_url`：服务商 API base URL。
+- `providers.*.api_key_env`：从 `.env` 或系统环境变量读取的密钥变量名。
+- `models[].name`：本地展示名称，建议唯一。
+- `models[].provider`：引用 `providers` 中的 provider 名称，例如 `zai` 或 `bailian`。
+- `models[].model`：服务商模型名。
+- `models[].temperature`：可选，覆盖默认采样温度；适合用同一模型测试不同输出随机性。
+- `models[].max_tokens`：可选，覆盖默认输出 token 上限。
+- `models[].enabled`：是否参与本次对比。
+- `models[].headers`：额外 HTTP headers。
+- `models[].extra_body`：透传额外请求字段。
 
-============================================================
-Dify Agent 测试工具
-============================================================
-输入 'exit' 或 'quit' 退出
-输入 'reset' 重置对话（清空 conversation_id）
-输入 'config' 显示当前配置
-============================================================
+同一个模型可以配置多条，只要 `name` 不同即可。例如：
 
-✓ 配置文件加载成功
-
-============================================================
-配置信息:
-------------------------------------------------------------
-API Key: app-xxx...
-Dify Base URL: https://api.dify.ai/v1
-时区: Asia/Shanghai
-用户标识: test_user_001
-...
-============================================================
-
-请输入 user_input (或输入命令): 我想创建一个任务
-
-正在调用 Dify API...
-用户输入: 我想创建一个任务
-✓ API 调用成功
-
-============================================================
-AI 响应:
-------------------------------------------------------------
-[AI 返回的答案内容]
-------------------------------------------------------------
-对话ID: abc123...
-Token 使用量: 1234
-模型: gpt-4
-============================================================
-
-请输入 user_input (或输入命令): 这个任务需要30分钟
-
-正在调用 Dify API...
-用户输入: 这个任务需要30分钟
-对话ID: abc123...
-✓ API 调用成功
-
-...
+```json
+[
+  {
+    "name": "bailian_qwen_plus_temp_0_2",
+    "provider": "bailian",
+    "model": "qwen-plus",
+    "temperature": 0.2,
+    "enabled": true
+  },
+  {
+    "name": "bailian_qwen_plus_temp_0_8",
+    "provider": "bailian",
+    "model": "qwen-plus",
+    "temperature": 0.8,
+    "enabled": true
+  }
+]
 ```
 
-## 多轮对话
+这样可以在同一批 case 下比较同一模型不同 temperature 的稳定性、创造性和结构化输出一致性。
 
-脚本会自动管理 `conversation_id`，实现多轮对话：
+## Prompt 和 Case
 
-1. 首次调用：不传递 `conversation_id`
-2. 后续调用：使用 API 返回的 `conversation_id`
-3. 重置对话：输入 `reset` 命令清空 `conversation_id`
+system prompt 是普通 Markdown 文件：
 
-## 注意事项
-
-1. **API 密钥安全**: 请妥善保管 `config.json` 中的 API 密钥，不要提交到版本控制系统
-2. **超时设置**: 默认超时时间为 60 秒，可在代码中修改 `timeout` 变量
-3. **独立运行**: 脚本完全独立，不依赖后端数据库或其他模块
-4. **配置文件格式**: 必须使用有效的 JSON 格式
-5. **中文输入体验**: 已内置 `prompt_toolkit`，可保障退格键在中文、Emoji 等宽字符场景下显示正常；如禁用该依赖，请注意回退到标准输入时光标可能存在偏差
-
-## 故障排查
-
-### 配置文件不存在
+```text
+prompts/system.intent.example.md
 ```
-错误: 配置文件不存在: config.json
+
+case 文件是 JSON 数组，支持两种写法。
+
+字符串数组：
+
+```json
+[
+  "明天下午三点提醒我开项目复盘会",
+  "最近总觉得效率很低，有点烦"
+]
 ```
-**解决方案**: 确保 `config.json` 文件存在于 `agentTest/` 目录下，或使用 `--config` 参数指定配置文件路径
 
-### API 调用失败
+带 ID 的对象数组：
+
+```json
+[
+  {
+    "id": "intent_item_001",
+    "input": "明天下午三点提醒我开项目复盘会"
+  }
+]
 ```
-❌ 错误: Dify API调用失败: HTTP 401, ...
+
+`input` 也可以是对象或数组，工具会自动序列化为 JSON 文本发给模型，适合复用后端/Dify 的结构化输入样例。
+
+## 输出结果
+
+默认每次运行会生成两个文件：
+
+```text
+runs/model_compare_YYYYMMDD_HHMMSS.json
+runs/model_compare_YYYYMMDD_HHMMSS.md
 ```
-**解决方案**: 检查 `api_key` 是否正确，以及 API 密钥是否有权限访问对应的 Dify agent
 
-### 网络超时
-```
-❌ 错误: API调用超时（60秒）
-```
-**解决方案**: 检查网络连接，或增加超时时间（修改代码中的 `timeout` 变量）
+JSON 适合后续脚本分析；Markdown 适合人工评审模型输出差异。
 
-## 技术实现
+## 扩展模型服务商
 
-脚本参考了 `app/services/input_analysis_service.py` 的实现方式：
+如果服务商兼容 OpenAI Chat Completions，只需要在 `models` 中新增一项配置。
 
-- 使用 `aiohttp` 发送异步 HTTP 请求
-- 构建符合 Dify API 规范的 payload
-- 处理 `inputs`（category, repetition, nowtime）和 `query`（完整输入数据）
-- 支持 `conversation_id` 实现多轮对话
-
-工具模块 `dify_helper.py` 提供了独立实现的工具函数：
-
-- `build_category_string()`: 构建任务分类字符串
-- `build_repetition_string()`: 构建重复频率字符串
-- `build_nowtime()`: 生成 ISO 格式时间字符串
-- `get_context_info()`: 获取环境上下文信息
-- `format_response()`: 格式化响应输出
-
-## 许可证
-
-本工具为内部测试工具，仅供开发和测试使用。
+如果服务商接口不兼容，需要新增 client，并在 [`llm_compare/runner.py`](./llm_compare/runner.py) 的 `create_client()` 中注册。

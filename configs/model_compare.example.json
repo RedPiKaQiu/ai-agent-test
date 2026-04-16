@@ -1,0 +1,64 @@
+{
+  "env_file": "../.env",
+  "system_prompt_file": "../prompts/system.intent.example.md",
+  "cases_file": "../prompts/cases.intent.example.json",
+  "output_dir": "../runs",
+  "timeout_seconds": 120,
+  "max_concurrency": 4,
+  "defaults": {
+    "temperature": 0.5,
+    "max_tokens": 10000
+  },
+  "providers": {
+    "zai": {
+      "type": "openai_compatible",
+      "base_url": "https://api.z.ai/api/paas/v4",
+      "api_key_env": "ZAI_API_KEY"
+    },
+    "bailian": {
+      "type": "openai_compatible",
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "api_key_env": "BAILIAN_API_KEY"
+    }
+  },
+  "models": [
+    {
+      "name": "zai_glm_5_1",
+      "provider": "zai",
+      "model": "glm-5.1",
+      "enabled": false
+    },
+    {
+      "name": "zai_glm_4_6",
+      "provider": "zai",
+      "model": "glm-4.6",
+      "enabled": false
+    },
+    {
+      "name": "bailian_qwen3_max",
+      "provider": "bailian",
+      "model": "qwen3-max",
+      "enabled": false
+    },
+    {
+      "name": "bailian_qwen_plus_temp_0_2",
+      "provider": "bailian",
+      "model": "qwen-plus",
+      "temperature": 0.2,
+      "enabled": false
+    },
+    {
+      "name": "bailian_qwen_plus_temp_0_8",
+      "provider": "bailian",
+      "model": "qwen-plus",
+      "temperature": 0.8,
+      "enabled": false
+    },
+    {
+      "name": "bailian_qwen_flash",
+      "provider": "bailian",
+      "model": "qwen-flash",
+      "enabled": false
+    }
+  ]
+}

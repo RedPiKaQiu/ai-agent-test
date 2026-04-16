@@ -9,3 +9,7 @@ dist/
 *.egg-info/
 .DS_Store
 localdoc
+runs/
+configs/model_compare.local.json
+.env
+.env.local
