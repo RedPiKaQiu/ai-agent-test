@@ -55,6 +55,29 @@ class CompareConfig:
     config_dir: Path
 
 
+@dataclass
+class PromptConfig:
+    """One prompt variant to compare."""
+
+    name: str
+    path: Path
+    enabled: bool = True
+
+
+@dataclass
+class PromptCompareConfig:
+    """Top-level prompt comparison config."""
+
+    prompts: List[PromptConfig]
+    cases_file: Optional[Path]
+    output_dir: Path
+    timeout_seconds: int
+    max_concurrency: int
+    defaults: Dict[str, Any]
+    models: List[ModelConfig]
+    config_dir: Path
+
+
 def _load_dotenv(path: Path) -> None:
     """Load simple KEY=VALUE pairs from .env without overriding real env vars."""
     if not path.exists():
@@ -91,8 +114,7 @@ def _resolve_path(config_dir: Path, raw_path: Optional[str]) -> Optional[Path]:
     return (config_dir / path).resolve()
 
 
-def load_compare_config(path: str) -> CompareConfig:
-    """Load and validate a JSON comparison config."""
+def _load_config_json(path: str) -> tuple[Dict[str, Any], Path, Path]:
     config_path = Path(path).resolve()
     config_dir = config_path.parent
 
@@ -103,8 +125,11 @@ def load_compare_config(path: str) -> CompareConfig:
     if env_file:
         _load_dotenv(env_file)
 
+    return raw, config_path, config_dir
+
+
+def _load_model_configs(raw: Dict[str, Any], timeout_seconds: int) -> List[ModelConfig]:
     defaults = raw.get("defaults", {})
-    timeout_seconds = int(raw.get("timeout_seconds", 120))
     providers = raw.get("providers", {})
 
     models: List[ModelConfig] = []
@@ -157,12 +182,82 @@ def load_compare_config(path: str) -> CompareConfig:
     if not models:
         raise ValueError("Config must include at least one model")
 
+    return models
+
+
+def _load_prompt_configs(raw: Dict[str, Any], config_dir: Path) -> List[PromptConfig]:
+    raw_prompts = raw.get("prompt_files")
+    if not raw_prompts and raw.get("system_prompt_file"):
+        raw_prompts = [
+            {
+                "name": Path(raw["system_prompt_file"]).stem,
+                "path": raw["system_prompt_file"],
+                "enabled": True,
+            }
+        ]
+    if not isinstance(raw_prompts, list) or not raw_prompts:
+        raise ValueError("Config must include prompt_files")
+
+    prompts: List[PromptConfig] = []
+    seen_names = set()
+    for index, item in enumerate(raw_prompts, start=1):
+        if isinstance(item, str):
+            prompt_path = _resolve_path(config_dir, item)
+            name = prompt_path.stem if prompt_path else f"prompt_{index}"
+            enabled = True
+        elif isinstance(item, dict):
+            raw_path = item.get("path") or item.get("file")
+            if not raw_path:
+                raise ValueError("Each prompt config must include path")
+            prompt_path = _resolve_path(config_dir, raw_path)
+            name = str(item.get("name") or prompt_path.stem)
+            enabled = bool(item.get("enabled", True))
+        else:
+            raise ValueError("Each prompt_files item must be a string or object")
+
+        if name in seen_names:
+            raise ValueError(f"Duplicate prompt name '{name}'")
+        seen_names.add(name)
+        prompts.append(PromptConfig(name=name, path=prompt_path, enabled=enabled))
+
+    return prompts
+
+
+def load_compare_config(path: str) -> CompareConfig:
+    """Load and validate a JSON comparison config."""
+    raw, _, config_dir = _load_config_json(path)
+
+    defaults = raw.get("defaults", {})
+    timeout_seconds = int(raw.get("timeout_seconds", 120))
+    models = _load_model_configs(raw, timeout_seconds)
+
     system_prompt_file = _resolve_path(config_dir, raw.get("system_prompt_file"))
     if not system_prompt_file:
         raise ValueError("Config must include system_prompt_file")
 
     return CompareConfig(
         system_prompt_file=system_prompt_file,
+        cases_file=_resolve_path(config_dir, raw.get("cases_file")),
+        output_dir=_resolve_path(config_dir, raw.get("output_dir")) or (config_dir / "runs"),
+        timeout_seconds=timeout_seconds,
+        max_concurrency=int(raw.get("max_concurrency", 4)),
+        defaults=defaults,
+        models=models,
+        config_dir=config_dir,
+    )
+
+
+def load_prompt_compare_config(path: str) -> PromptCompareConfig:
+    """Load and validate a JSON prompt comparison config."""
+    raw, _, config_dir = _load_config_json(path)
+
+    defaults = raw.get("defaults", {})
+    timeout_seconds = int(raw.get("timeout_seconds", 120))
+    models = _load_model_configs(raw, timeout_seconds)
+    prompts = _load_prompt_configs(raw, config_dir)
+
+    return PromptCompareConfig(
+        prompts=prompts,
         cases_file=_resolve_path(config_dir, raw.get("cases_file")),
         output_dir=_resolve_path(config_dir, raw.get("output_dir")) or (config_dir / "runs"),
         timeout_seconds=timeout_seconds,

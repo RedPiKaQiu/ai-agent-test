@@ -10,6 +10,6 @@ dist/
 .DS_Store
 localdoc
 runs/
-configs/model_compare.local.json
+configs/*.local.json
 .env
 .env.local

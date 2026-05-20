@@ -9,7 +9,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
-from .config import CompareConfig, ModelConfig
+from .config import CompareConfig, ModelConfig, PromptCompareConfig, PromptConfig, read_text_file
 
 ProgressCallback = Callable[[str, Dict[str, Any]], None]
 
@@ -17,6 +17,11 @@ ProgressCallback = Callable[[str, Dict[str, Any]], None]
 def enabled_models(config: CompareConfig) -> List[ModelConfig]:
     """Return enabled models only."""
     return [model for model in config.models if model.enabled]
+
+
+def enabled_prompts(config: PromptCompareConfig) -> List[PromptConfig]:
+    """Return enabled prompt variants only."""
+    return [prompt for prompt in config.prompts if prompt.enabled]
 
 
 def create_client(model_config: ModelConfig):
@@ -142,7 +147,8 @@ async def run_cases(
 
     report = {
         "created_at": started_at.isoformat(timespec="seconds"),
-        "system_prompt_file": str(config.system_prompt_file),
+        "comparison_type": "model",
+        "system_prompt_file": str(getattr(config, "system_prompt_file", "")),
         "models": [
             {
                 "name": model.name,
@@ -158,6 +164,99 @@ async def run_cases(
         "cases": case_results,
     }
     _emit_progress(progress_callback, "run_done", {"report": report})
+    return report
+
+
+async def run_prompt_cases(
+    cases: List[Dict[str, str]],
+    config: PromptCompareConfig,
+    progress_callback: Optional[ProgressCallback] = None,
+) -> Dict[str, Any]:
+    """Run the same cases against each enabled prompt variant."""
+    prompts = enabled_prompts(config)
+    if not prompts:
+        raise ValueError("No enabled prompts found in config")
+
+    models = enabled_models(config)
+    if not models:
+        raise ValueError("No enabled models found in config")
+
+    started_at = datetime.now()
+    _emit_progress(
+        progress_callback,
+        "prompt_run_start",
+        {
+            "case_count": len(cases),
+            "prompt_count": len(prompts),
+            "model_count": len(models),
+            "max_concurrency": config.max_concurrency,
+        },
+    )
+
+    case_buckets = [{"case": case, "prompts": []} for case in cases]
+
+    for prompt_index, prompt in enumerate(prompts, start=1):
+        _emit_progress(
+            progress_callback,
+            "prompt_start",
+            {
+                "prompt": prompt,
+                "prompt_index": prompt_index,
+                "prompt_count": len(prompts),
+            },
+        )
+        system_prompt = read_text_file(prompt.path)
+        prompt_report = await run_cases(
+            system_prompt=system_prompt,
+            cases=cases,
+            config=config,
+            progress_callback=progress_callback,
+        )
+
+        for case_index, case_result in enumerate(prompt_report["cases"]):
+            case_buckets[case_index]["prompts"].append(
+                {
+                    "prompt_name": prompt.name,
+                    "prompt_file": str(prompt.path),
+                    "results": case_result["results"],
+                }
+            )
+
+        _emit_progress(
+            progress_callback,
+            "prompt_done",
+            {
+                "prompt": prompt,
+                "prompt_index": prompt_index,
+                "prompt_count": len(prompts),
+            },
+        )
+
+    report = {
+        "created_at": started_at.isoformat(timespec="seconds"),
+        "comparison_type": "prompt",
+        "prompts": [
+            {
+                "name": prompt.name,
+                "path": str(prompt.path),
+            }
+            for prompt in prompts
+        ],
+        "models": [
+            {
+                "name": model.name,
+                "provider": model.provider,
+                "provider_type": model.provider_type,
+                "model": model.model,
+                "base_url": model.base_url,
+                "temperature": model.temperature,
+                "max_tokens": model.max_tokens,
+            }
+            for model in models
+        ],
+        "cases": case_buckets,
+    }
+    _emit_progress(progress_callback, "prompt_run_done", {"report": report})
     return report
 
 
@@ -306,6 +405,41 @@ def print_progress(event: str, payload: Dict[str, Any]) -> None:
         )
 
 
+def print_prompt_progress(event: str, payload: Dict[str, Any]) -> None:
+    """Print progress for prompt comparison runs."""
+    if event == "prompt_run_start":
+        print(
+            "Starting prompt comparison: "
+            f"{payload['case_count']} case(s), {payload['prompt_count']} prompt(s), "
+            f"{payload['model_count']} model(s), concurrency={payload['max_concurrency']}",
+            flush=True,
+        )
+        return
+
+    if event == "prompt_start":
+        prompt = payload["prompt"]
+        print(
+            f"\nPrompt {payload['prompt_index']}/{payload['prompt_count']} "
+            f"{prompt.name}: {prompt.path}",
+            flush=True,
+        )
+        return
+
+    if event == "prompt_done":
+        prompt = payload["prompt"]
+        print(
+            f"Prompt {payload['prompt_index']}/{payload['prompt_count']} done: {prompt.name}",
+            flush=True,
+        )
+        return
+
+    if event == "prompt_run_done":
+        print("\nPrompt comparison done", flush=True)
+        return
+
+    print_progress(event, payload)
+
+
 def print_report(report: Dict[str, Any]) -> None:
     """Print a readable report to stdout."""
     for case_result in report["cases"]:
@@ -358,6 +492,22 @@ def save_report(report: Dict[str, Any], output_dir: Path) -> Dict[str, Path]:
     return {"json": json_path, "markdown": md_path}
 
 
+def save_prompt_report(report: Dict[str, Any], output_dir: Path) -> Dict[str, Path]:
+    """Save the prompt comparison report as JSON and Markdown."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    json_path = output_dir / f"prompt_compare_{timestamp}.json"
+    md_path = output_dir / f"prompt_compare_{timestamp}.md"
+
+    with open(json_path, "w", encoding="utf-8") as file:
+        json.dump(report, file, ensure_ascii=False, indent=2)
+
+    with open(md_path, "w", encoding="utf-8") as file:
+        file.write(to_prompt_markdown(report))
+
+    return {"json": json_path, "markdown": md_path}
+
+
 def to_markdown(report: Dict[str, Any]) -> str:
     """Render the report as Markdown."""
     lines = [
@@ -403,5 +553,171 @@ def to_markdown(report: Dict[str, Any]) -> str:
                 metadata.append(f"tokens={usage['total_tokens']}")
             if metadata:
                 lines.extend(["", "`" + ", ".join(metadata) + "`"])
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def summarize_prompt_report(report: Dict[str, Any]) -> Dict[str, Any]:
+    """Return compact aggregate metrics for a completed prompt comparison report."""
+    results = []
+    for case_result in report["cases"]:
+        for prompt_result in case_result["prompts"]:
+            for result in prompt_result["results"]:
+                results.append((case_result["case"], prompt_result, result))
+
+    ok_count = sum(1 for _, _, result in results if result["ok"])
+    failed = [(case, prompt, result) for case, prompt, result in results if not result["ok"]]
+    latencies = [
+        result["latency_seconds"]
+        for _, _, result in results
+        if isinstance(result.get("latency_seconds"), (int, float))
+    ]
+
+    latency_summary = None
+    if latencies:
+        latency_summary = {
+            "min": min(latencies),
+            "avg": sum(latencies) / len(latencies),
+            "max": max(latencies),
+        }
+
+    return {
+        "cases": len(report["cases"]),
+        "prompts": len(report["prompts"]),
+        "models": len(report["models"]),
+        "calls": len(results),
+        "ok": ok_count,
+        "failed": len(failed),
+        "latency": latency_summary,
+        "failures": failed,
+    }
+
+
+def print_prompt_summary(
+    report: Dict[str, Any],
+    saved: Optional[Dict[str, Path]] = None,
+) -> None:
+    """Print a concise prompt comparison completion summary to stdout."""
+    summary = summarize_prompt_report(report)
+    print("\nSummary:", flush=True)
+    print(f"- Cases: {summary['cases']}", flush=True)
+    print(f"- Prompts: {summary['prompts']}", flush=True)
+    print(f"- Models: {summary['models']}", flush=True)
+    print(
+        f"- Calls: {summary['calls']} total, "
+        f"{summary['ok']} ok, {summary['failed']} failed",
+        flush=True,
+    )
+
+    latency = summary["latency"]
+    if latency:
+        print(
+            "- Latency: "
+            f"min {latency['min']:.2f}s, avg {latency['avg']:.2f}s, max {latency['max']:.2f}s",
+            flush=True,
+        )
+
+    failures = summary["failures"]
+    if failures:
+        print("- Failures:", flush=True)
+        for case, prompt, result in failures[:3]:
+            print(
+                f"  {case['id']} / {prompt['prompt_name']} / {result['model_name']}: "
+                f"{_shorten(result.get('error', 'unknown error'))}",
+                flush=True,
+            )
+        if len(failures) > 3:
+            print(f"  ... {len(failures) - 3} more", flush=True)
+
+    if saved:
+        print("- Saved:", flush=True)
+        print(f"  JSON: {saved['json']}", flush=True)
+        print(f"  Markdown: {saved['markdown']}", flush=True)
+
+
+def _format_result_heading(result: Dict[str, Any]) -> str:
+    options = []
+    if result.get("temperature") is not None:
+        options.append(f"temperature={result['temperature']}")
+    if result.get("max_tokens") is not None:
+        options.append(f"max_tokens={result['max_tokens']}")
+    suffix = f" ({', '.join(options)})" if options else ""
+    return f"{result['model_name']}{suffix}"
+
+
+def to_prompt_markdown(report: Dict[str, Any]) -> str:
+    """Render a prompt comparison report for manual review."""
+    lines = [
+        "# Prompt Compare Report",
+        "",
+        f"- Created at: {report['created_at']}",
+        f"- Cases: {len(report['cases'])}",
+        f"- Prompts: {len(report['prompts'])}",
+        f"- Models: {len(report['models'])}",
+        "",
+        "## Prompts",
+        "",
+    ]
+
+    for prompt in report["prompts"]:
+        lines.append(f"- `{prompt['name']}`: `{prompt['path']}`")
+
+    lines.extend(["", "## Models", ""])
+    for model in report["models"]:
+        options = []
+        if model.get("temperature") is not None:
+            options.append(f"temperature={model['temperature']}")
+        if model.get("max_tokens") is not None:
+            options.append(f"max_tokens={model['max_tokens']}")
+        suffix = f" ({', '.join(options)})" if options else ""
+        lines.append(f"- `{model['name']}`: `{model['model']}` @ `{model['base_url']}`{suffix}")
+
+    lines.extend(
+        [
+            "",
+            "## Manual Review Sheet",
+            "",
+            "| Case | Best Prompt | Notes |",
+            "| --- | --- | --- |",
+        ]
+    )
+    for case_result in report["cases"]:
+        case = case_result["case"]
+        lines.append(f"| `{case['id']}` |  |  |")
+
+    for case_result in report["cases"]:
+        case = case_result["case"]
+        lines.extend(["", f"## {case['id']}", "", "### Input", "", case["input"], ""])
+
+        for prompt_result in case_result["prompts"]:
+            lines.extend(
+                [
+                    "",
+                    f"### Prompt: {prompt_result['prompt_name']}",
+                    "",
+                    f"`{prompt_result['prompt_file']}`",
+                    "",
+                    "| Model | Status | Latency | Tokens |",
+                    "| --- | --- | --- | --- |",
+                ]
+            )
+
+            for result in prompt_result["results"]:
+                usage = result.get("usage") or {}
+                latency = result.get("latency_seconds")
+                latency_text = f"{latency:.2f}s" if isinstance(latency, (int, float)) else ""
+                tokens = usage.get("total_tokens")
+                token_text = str(tokens) if tokens is not None else ""
+                status = "OK" if result["ok"] else "FAILED"
+                lines.append(
+                    f"| `{_format_result_heading(result)}` | {status} | {latency_text} | {token_text} |"
+                )
+
+            for result in prompt_result["results"]:
+                lines.extend(["", f"#### {_format_result_heading(result)}", ""])
+                if not result["ok"]:
+                    lines.append(f"ERROR: {result['error']}")
+                    continue
+                lines.append(result.get("answer", "").strip())
 
     return "\n".join(lines).rstrip() + "\n"

@@ -1,12 +1,13 @@
-# AI 直连模型对比工具
+# AI 直连对比工具
 
-这个项目用于脱离后端和 Dify 编排，直接调用多个 OpenAI-compatible 模型，对同一个 system prompt 和同一组用户输入进行并发对比。适合做模型选型、prompt 回归测试、结构化输出稳定性评估。
+这个项目用于脱离后端和 Dify 编排，直接调用 OpenAI-compatible 模型，对模型效果或提示词效果进行并发对比。适合做模型选型、prompt 人工评审、prompt 回归测试、结构化输出稳定性评估。
 
 Dify 调用脚本已经单独移到 [`dify_agent_test/`](./dify_agent_test/README.md)。
 
 ## 核心能力
 
-- 同一个 system prompt 文件同时调用多个模型。
+- 模型对比模式：同一个 system prompt 文件同时调用多个模型。
+- 提示词对比模式：多个 system prompt 文件使用同一批 case 横向对比。
 - 模型、密钥环境变量、base URL、温度、token 上限都通过 JSON 配置。
 - 支持批量 case 文件，也支持命令行传入单条输入。
 - 每次运行会输出终端对比结果，并可保存 JSON 和 Markdown 报告。
@@ -16,13 +17,16 @@ Dify 调用脚本已经单独移到 [`dify_agent_test/`](./dify_agent_test/READM
 
 ```text
 .
-├── compare_models.py                    # 直连模型对比 CLI
+├── compare_models.py                    # 模型对比 CLI
+├── compare_prompts.py                   # 提示词对比 CLI
 ├── llm_compare/                         # 模型对比框架代码
 ├── configs/
-│   └── model_compare.example.json       # 配置示例
+│   ├── model_compare.example.json       # 模型对比配置示例
+│   └── prompt_compare.example.json      # 提示词对比配置示例
 ├── .env.example                         # 环境变量示例，不含真实密钥
 ├── prompts/
 │   ├── system.intent.example.md         # system prompt 示例
+│   ├── system.intent.strict.example.md  # system prompt 变体示例
 │   └── cases.intent.example.json        # 测试 case 示例
 ├── runs/                                # 运行结果输出目录，已 gitignore
 ├── dify_agent_test/                     # 原 Dify 测试脚本，独立 README
@@ -52,11 +56,12 @@ cp .env.example .env
 
 ```bash
 cp configs/model_compare.example.json configs/model_compare.local.json
+cp configs/prompt_compare.example.json configs/prompt_compare.local.json
 ```
 
-`configs/model_compare.local.json` 已加入 `.gitignore`，建议在这里启用本机要测试的模型。示例配置 [`configs/model_compare.example.json`](./configs/model_compare.example.json) 可以提交到 git，因为它只引用环境变量名，不包含真实密钥。
+`configs/*.local.json` 已加入 `.gitignore`，建议在这里启用本机要测试的模型或提示词。示例配置可以提交到 git，因为它只引用环境变量名，不包含真实密钥。
 
-示例里的模型默认都是 `"enabled": false`，实际运行前只需要在本地配置中把要测试的模型改成 `"enabled": true`。
+实际运行前只需要在本地配置中把要测试的模型或提示词改成 `"enabled": true`。
 
 `.env` 示例：
 
@@ -70,6 +75,10 @@ BAILIAN_API_KEY=sk-...
 ```bash
 python compare_models.py --config configs/model_compare.local.json --list-models
 ```
+
+## 模型对比模式
+
+适合回答：“同一个提示词下，哪个模型效果更好？”
 
 批量运行 `cases_file`：
 
@@ -98,6 +107,49 @@ python compare_models.py --config configs/model_compare.local.json --no-save
 ```bash
 python compare_models.py --config configs/model_compare.local.json --print-report
 ```
+
+## 提示词对比模式
+
+适合回答：“同一个模型下，哪个提示词版本效果更好？”
+
+提示词对比配置示例见 [`configs/prompt_compare.example.json`](./configs/prompt_compare.example.json)。建议默认只启用一个模型，这样差异主要来自提示词，而不是模型本身。
+
+查看配置中的提示词版本：
+
+```bash
+python compare_prompts.py --config configs/prompt_compare.local.json --list-prompts
+```
+
+批量运行 `cases_file`：
+
+```bash
+python compare_prompts.py --config configs/prompt_compare.local.json
+```
+
+运行单条输入：
+
+```bash
+python compare_prompts.py \
+  --config configs/prompt_compare.local.json \
+  --case "明天下午三点提醒我开项目复盘会，大概一小时"
+```
+
+每次运行会生成：
+
+```text
+runs/prompt_compare_YYYYMMDD_HHMMSS.json
+runs/prompt_compare_YYYYMMDD_HHMMSS.md
+```
+
+Markdown 报告里会按 case 展示所有 prompt 的输出，并提供人工评审表：
+
+```text
+| Case | Best Prompt | Notes |
+| --- | --- | --- |
+| case_001 |  |  |
+```
+
+非技术同事只需要打开 Markdown，逐条填写 `Best Prompt` 和 `Notes` 即可。
 
 ## 配置说明
 
@@ -161,6 +213,29 @@ python compare_models.py --config configs/model_compare.local.json --print-repor
 - `models[].enabled`：是否参与本次对比。
 - `models[].headers`：额外 HTTP headers。
 - `models[].extra_body`：透传额外请求字段。
+
+提示词对比模式额外使用 `prompt_files`：
+
+```json
+{
+  "prompt_files": [
+    {
+      "name": "baseline",
+      "path": "../prompts/system.intent.example.md",
+      "enabled": true
+    },
+    {
+      "name": "strict_json",
+      "path": "../prompts/system.intent.strict.example.md",
+      "enabled": true
+    }
+  ]
+}
+```
+
+- `prompt_files[].name`：报告中展示的提示词版本名，建议简短清晰。
+- `prompt_files[].path`：提示词 Markdown 文件路径。
+- `prompt_files[].enabled`：是否参与本次提示词对比。
 
 同一个模型可以配置多条，只要 `name` 不同即可。例如：
 
