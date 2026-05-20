@@ -646,6 +646,35 @@ def _format_result_heading(result: Dict[str, Any]) -> str:
     return f"{result['model_name']}{suffix}"
 
 
+def print_prompt_outputs(report: Dict[str, Any]) -> None:
+    """Print prompt run outputs in a compact CLI-friendly format."""
+    print("\nOutputs:", flush=True)
+    multiple_cases = len(report["cases"]) > 1
+    multiple_prompts = len(report["prompts"]) > 1
+
+    for case_result in report["cases"]:
+        case = case_result["case"]
+        if multiple_cases:
+            print(f"\nCase: {case['id']}", flush=True)
+
+        for prompt_result in case_result["prompts"]:
+            if multiple_prompts:
+                print(f"\nPrompt: {prompt_result['prompt_name']}", flush=True)
+
+            for result in prompt_result["results"]:
+                latency = result.get("latency_seconds")
+                latency_text = f"{latency:.2f}s" if isinstance(latency, (int, float)) else ""
+                status = "OK" if result["ok"] else "FAILED"
+                output = result.get("answer", "").strip() if result["ok"] else f"ERROR: {result['error']}"
+
+                print("-" * 80, flush=True)
+                print(f"Model: {_format_result_heading(result)}", flush=True)
+                print(f"Status: {status}", flush=True)
+                print(f"Latency: {latency_text}", flush=True)
+                print("Output:", flush=True)
+                print(output, flush=True)
+
+
 def to_prompt_markdown(report: Dict[str, Any]) -> str:
     """Render a prompt comparison report for manual review."""
     lines = [

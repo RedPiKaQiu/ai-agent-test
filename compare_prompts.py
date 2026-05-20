@@ -11,6 +11,7 @@ from typing import Dict, List, Optional
 
 from llm_compare.config import load_cases, load_prompt_compare_config
 from llm_compare.runner import (
+    print_prompt_outputs,
     print_prompt_progress,
     print_prompt_summary,
     run_prompt_cases,
@@ -69,6 +70,12 @@ async def main() -> None:
         help="Override output_dir from config.",
     )
     parser.add_argument(
+        "--print",
+        dest="print_outputs",
+        action="store_true",
+        help="Print Model, Status, Latency and Output after the progress summary.",
+    )
+    parser.add_argument(
         "--print-report",
         action="store_true",
         help="Print full prompt comparison report after the progress summary.",
@@ -106,8 +113,11 @@ async def main() -> None:
 
         print_prompt_summary(report, saved)
 
-        if args.no_save and not args.print_report:
+        if args.no_save and not args.print_report and not args.print_outputs:
             print("- Detailed answers: not saved (--no-save) and not printed", flush=True)
+
+        if args.print_outputs:
+            print_prompt_outputs(report)
 
         if args.print_report:
             print(to_prompt_markdown(report))
