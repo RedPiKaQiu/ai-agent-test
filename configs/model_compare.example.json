@@ -23,7 +23,7 @@
   },
   "env_file": "../.env",
   "system_prompt_file": "../prompts/system.intent.example.md",
-  "cases_file": "../prompts/cases.intent.example.json",
+  "cases_file": "../cases/intent.example.json",
   "output_dir": "../runs",
   "timeout_seconds": 60,
   "max_concurrency": 4,

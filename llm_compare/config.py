@@ -9,6 +9,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
+DEFAULT_PROVIDER_EXTRA_BODY: Dict[str, Dict[str, Any]] = {
+    "zai": {"thinking": {"type": "disabled"}},
+    "bailian": {"enable_thinking": False},
+}
+
+
 @dataclass
 class ModelConfig:
     """One model endpoint to compare."""
@@ -157,6 +163,7 @@ def _load_model_configs(raw: Dict[str, Any], timeout_seconds: int) -> List[Model
             **item.get("headers", {}),
         }
         extra_body = {
+            **DEFAULT_PROVIDER_EXTRA_BODY.get(provider_name, {}),
             **provider_config.get("extra_body", {}),
             **item.get("extra_body", {}),
         }
@@ -281,12 +288,15 @@ def _normalize_case_input(value: Any) -> str:
 
 
 def load_cases(path: Path) -> List[Dict[str, str]]:
-    """Load cases from a JSON array with id/input fields."""
+    """Load cases from a JSON array, or one JSON object as a single case."""
     with open(path, "r", encoding="utf-8") as file:
         raw = json.load(file)
 
+    if isinstance(raw, dict):
+        return [{"id": str(raw.get("id") or path.stem), "input": _normalize_case_input(raw)}]
+
     if not isinstance(raw, list):
-        raise ValueError("cases_file must be a JSON array")
+        raise ValueError("cases_file must be a JSON array or a JSON object")
 
     cases: List[Dict[str, str]] = []
     for index, item in enumerate(raw, start=1):

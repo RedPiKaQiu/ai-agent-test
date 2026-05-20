@@ -22,12 +22,15 @@ Dify 调用脚本已经单独移到 [`dify_agent_test/`](./dify_agent_test/READM
 ├── llm_compare/                         # 模型对比框架代码
 ├── configs/
 │   ├── model_compare.example.json       # 模型对比配置示例
+│   ├── prompt_single.example.json       # 单提示词调用测试配置示例
 │   └── prompt_compare.example.json      # 提示词对比配置示例
 ├── .env.example                         # 环境变量示例，不含真实密钥
 ├── prompts/
 │   ├── system.intent.example.md         # system prompt 示例
-│   ├── system.intent.strict.example.md  # system prompt 变体示例
-│   └── cases.intent.example.json        # 测试 case 示例
+│   └── system.intent.strict.example.md  # system prompt 变体示例
+├── cases/
+│   ├── intent.example.json              # 批量测试 case 示例
+│   └── single_input.example.json        # 单个输入 case 示例
 ├── runs/                                # 运行结果输出目录，已 gitignore
 ├── dify_agent_test/                     # 原 Dify 测试脚本，独立 README
 ├── requirements.txt
@@ -56,6 +59,7 @@ cp .env.example .env
 
 ```bash
 cp configs/model_compare.example.json configs/model_compare.local.json
+cp configs/prompt_single.example.json configs/prompt_single.local.json
 cp configs/prompt_compare.example.json configs/prompt_compare.local.json
 ```
 
@@ -106,6 +110,28 @@ python compare_models.py --config configs/model_compare.local.json --no-save
 
 ```bash
 python compare_models.py --config configs/model_compare.local.json --print-report
+```
+
+## 单提示词调用测试
+
+适合回答：“这个提示词对这些输入会输出什么？”
+
+`compare_prompts.py` 的默认配置是 [`configs/prompt_single.example.json`](./configs/prompt_single.example.json)，只启用一个模型和一个提示词，并默认读取 [`cases/single_input.example.json`](./cases/single_input.example.json)。配置好 `.env` 后，可以直接运行：
+
+```bash
+python compare_prompts.py
+```
+
+运行单条输入：
+
+```bash
+python compare_prompts.py --case "明天下午三点提醒我开项目复盘会，大概一小时"
+```
+
+如果要使用自己的本地配置：
+
+```bash
+python compare_prompts.py --config configs/prompt_single.local.json
 ```
 
 ## 提示词对比模式
@@ -159,7 +185,7 @@ Markdown 报告里会按 case 展示所有 prompt 的输出，并提供人工评
 {
   "env_file": "../.env",
   "system_prompt_file": "../prompts/system.intent.example.md",
-  "cases_file": "../prompts/cases.intent.example.json",
+  "cases_file": "../cases/intent.example.json",
   "output_dir": "../runs",
   "timeout_seconds": 120,
   "max_concurrency": 4,
@@ -195,7 +221,7 @@ Markdown 报告里会按 case 展示所有 prompt 的输出，并提供人工评
 
 - `env_file`：可选，本地 `.env` 文件路径；加载后不会覆盖系统里已存在的同名环境变量。
 - `system_prompt_file`：所有模型共用的 system prompt 文件。
-- `cases_file`：批量测试输入文件。
+- `cases_file`：测试输入文件，支持 JSON 数组或单个 JSON 对象。
 - `output_dir`：结果输出目录。
 - `timeout_seconds`：单个 API 请求超时时间。
 - `max_concurrency`：同一个 case 下最多同时调用多少个模型。

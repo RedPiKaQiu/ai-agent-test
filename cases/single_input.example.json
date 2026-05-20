@@ -1,0 +1,20 @@
+{
+  "user_input": "我累死了",
+  "snapshot": {
+    "profile": "用户画像"
+  },
+  "candidate_items": [
+    {
+      "idx": 1,
+      "item": "2026-04-18 下午;准备演示ppt;60分钟"
+    }
+  ],
+  "context_info": {
+    "time_of_day": "evening",
+    "day_of_week": "Saturday",
+    "season": "spring",
+    "nowtime": "2026-04-18T17:00:17.159042+08:00",
+    "repetition": "0：不重复/1：每日/2：每周/3：每月/4：每工作日",
+    "category": "1：生活/2：健康/3：工作/4：学习/5：放松/6：探索"
+  }
+}

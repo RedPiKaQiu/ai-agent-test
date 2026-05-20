@@ -544,6 +544,7 @@ def to_markdown(report: Dict[str, Any]) -> str:
             if not result["ok"]:
                 lines.append(f"ERROR: {result['error']}")
                 continue
+            lines.extend(["#### Output", ""])
             lines.append(result.get("answer", "").strip())
             usage = result.get("usage") or {}
             metadata = []
@@ -718,6 +719,7 @@ def to_prompt_markdown(report: Dict[str, Any]) -> str:
                 if not result["ok"]:
                     lines.append(f"ERROR: {result['error']}")
                     continue
+                lines.extend(["##### Output", ""])
                 lines.append(result.get("answer", "").strip())
 
     return "\n".join(lines).rstrip() + "\n"

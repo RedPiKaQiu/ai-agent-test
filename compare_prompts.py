@@ -35,7 +35,7 @@ async def main() -> None:
     )
     parser.add_argument(
         "--config",
-        default="configs/prompt_compare.example.json",
+        default="configs/prompt_single.example.json",
         help="Path to prompt comparison config JSON.",
     )
     parser.add_argument(
